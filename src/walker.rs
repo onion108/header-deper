@@ -1,5 +1,4 @@
-use std::os::unix::ffi::OsStrExt;
-use std::{collections::{HashMap, HashSet}, ffi::OsStr, fs::{self, OpenOptions}, io::Read, path::{self, Path, PathBuf}};
+use std::{collections::{HashMap, HashSet}, fs::{self, OpenOptions}, io::Read, path::{self, Path, PathBuf}};
 
 use crate::parser;
 
@@ -64,7 +63,7 @@ impl IncludeWalker {
     }
 
     fn walk_impl<P: AsRef<Path>>(&mut self, path: P, visited: &mut HashSet<String>) {
-        let absolute = path::absolute(path.as_ref()).expect("Cannot convert path to absolute somehow").to_string_lossy().to_string();
+        let absolute = get_abs_name(&path);
         // No need to search if we already visited.
         if self.graph.contains_key(&absolute) {
             return
@@ -76,19 +75,19 @@ impl IncludeWalker {
                 let mut buf = String::new();
                 f.read_to_string(&mut buf).expect("Failed to read to string");
 
+                // Parse all includes in the file.
                 let includes = parser::parse_includes(&buf);
                 let mut dependency_entry = Dependency::default();
                 dependency_entry.file = path.as_ref().with_extension("").to_string_lossy().into();
                 dependency_entry.full_path = absolute.clone();
                 for include_entry in &includes {
                     if let Some(file) = self.search_include(&path, include_entry) {
-                        let file_full_path = path::absolute(&file).expect("Failed to convert full path somehow").to_string_lossy().to_string();
-                        if path::absolute(&file).unwrap() == path::absolute(&path).unwrap() {
+                        let file_full_path = get_abs_name(&file);
+                        if is_same(&file, &path) {
                             continue;
                         }
                         if absolute.ends_with(".c") {
-                            let header = path::absolute(path.as_ref().with_extension("h")).expect("Failed to convert full path somehow");
-                            if header == path::absolute(&file).unwrap() {
+                            if is_same(path.as_ref().with_extension("h"), &file) {
                                 continue;
                             }
                         }
@@ -100,8 +99,8 @@ impl IncludeWalker {
                     }
                 }
                 // Also check the corresponding source file.
-                if path.as_ref().extension().unwrap_or(OsStr::from_bytes(&[])) == "h" {
-                    let c_file_full_path = path::absolute(path.as_ref().with_extension("c")).expect("Failed to convert full path somehow").to_string_lossy().to_string();
+                if path.as_ref().extension().map(|s| s == "h").unwrap_or(false) {
+                    let c_file_full_path = get_abs_name(path.as_ref().with_extension("c"));
                     if !visited.contains(&c_file_full_path) {
                         self.walk_impl(path.as_ref().with_extension("c"), visited);
                     }
@@ -116,5 +115,13 @@ impl IncludeWalker {
             }
         }
     }
+}
+
+fn get_abs_name<P: AsRef<Path>>(path: P) -> String {
+    path::absolute(&path.as_ref()).expect("Failed to convert full path somehow").to_string_lossy().to_string()
+}
+
+fn is_same<P0: AsRef<Path>, P1: AsRef<Path>>(p0: P0, p1: P1) -> bool {
+    path::absolute(p0.as_ref()).expect("Failed to convert full path somehow") == path::absolute(p1.as_ref()).expect("Failed to convert full path somehow")
 }
 
